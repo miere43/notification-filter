@@ -49,40 +49,39 @@ namespace
 
 		Settings::instance.enableLog = ini.GetBoolValue("General", "EnableLog", Settings::instance.enableLog);
 
-		std::vector<PatternLoad> entries;
+		std::vector<PatternLoad> patterns;
 
-		std::list<CSimpleIniA::Entry> hideEntries;
-		ini.GetAllValues("Filters", "Hide", hideEntries);
+		std::list<CSimpleIniA::Entry> entries;
+		ini.GetAllValues("Filters", "Hide", entries);
 
-		for (const auto& entry : hideEntries) {
-			const auto& textPattern = std::string(entry.pItem);
-			entries.push_back({ TextPattern{ textPattern }, entry.nOrder });
+		for (const auto& entry : entries) {
+			patterns.push_back({ TextPattern{ std::string(entry.pItem) }, entry.nOrder });
 		}
 
-		hideEntries.clear();
-		ini.GetAllValues("Filters", "HideRegex", hideEntries);
+		entries.clear();
+		ini.GetAllValues("Filters", "HideRegex", entries);
 
-		for (const auto& entry : hideEntries) {
-			std::string regexString(entry.pItem);
-			std::regex regexPattern;
+		for (const auto& entry : entries) {
+			std::string originalString(entry.pItem);
+			std::regex pattern;
 			try {
-				regexPattern = std::regex(regexString, std::regex_constants::ECMAScript);
+				pattern = std::regex(originalString, std::regex_constants::ECMAScript);
 			}
 			catch (const std::regex_error& e) {
-				logger::error("- Error parsing regular expression \"{}\": \"{}\"", regexString, e.what());
+				logger::error("- Error parsing regular expression \"{}\": \"{}\"", originalString, e.what());
 				continue;
 			}
 
-			entries.push_back({ RegularExpressionPattern{ regexString, regexPattern }, entry.nOrder });
+			patterns.push_back({ RegularExpressionPattern{ originalString, pattern }, entry.nOrder });
 		}
 
-		std::sort(entries.begin(), entries.end(), [](const PatternLoad& a, const PatternLoad& b) {
+		std::sort(patterns.begin(), patterns.end(), [](const PatternLoad& a, const PatternLoad& b) {
 			return a.order > b.order;
 		});
 
-		Settings::instance.patterns.reserve(entries.size());
-		for (const auto& entry : entries) {
-			Settings::instance.patterns.push_back(entry.value);
+		Settings::instance.patterns.reserve(patterns.size());
+		for (const auto& pattern : patterns) {
+			Settings::instance.patterns.push_back(pattern.value);
 		}
 	}
 
@@ -106,7 +105,7 @@ namespace
 		spdlog::set_pattern("%g(%#): [%^%l%$] %v"s);
 	}
 
-	static bool __fastcall ShouldSkipNotification(const char** textPtrRef)
+	static bool ShouldSkipNotification(const char** textPtrRef)
 	{
 		const auto text = std::string_view(*textPtrRef);
 		for (const auto& pattern : Settings::instance.patterns) {
@@ -170,7 +169,7 @@ namespace
 			cmp(al, 0);
 			je("ok");
 
-			// If return value is 0, exit from function (don't show notification).
+			// If return value is 1, exit from function (don't show notification).
 			mov(rax, REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0xD0).get());
 			jmp(rax);
 
@@ -184,17 +183,13 @@ namespace
 
 	static void Install()
 	{
-		REL::Relocation<uintptr_t> debugNotificationFuncContent(PapyrusDebugNotificationID, 0x51);
-		auto debugNotificationFuncStartPtr = debugNotificationFuncContent.get();
-
-		auto bruh = new DebugNotificationCode();
-		auto codePtr = bruh->getCode();
+		auto codeGen = new DebugNotificationCode();
+		auto codePtr = codeGen->getCode();
 
 		SKSE::AllocTrampoline(20);
 
-		// Replace 5 bytes of this instruction with trampoline.
-		// E8 7AEB9C00 | call <skyrimse.GetNotificationText>
-		SKSE::GetTrampoline().write_branch<5>(debugNotificationFuncStartPtr, codePtr);
+		// Replace call to GetNotificationText with our code.
+		SKSE::GetTrampoline().write_branch<5>(REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0x51).get(), codePtr);
 	}
 }
 
