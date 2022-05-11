@@ -57,20 +57,19 @@ namespace
 
 	static bool __fastcall ShouldSkipNotification(const char** textPtrRef)
 	{
-		auto textPtr = *textPtrRef;
-		const auto text = std::string_view(textPtr);
+		const auto text = std::string_view(*textPtrRef);
 		for (const auto& hideText : Settings::instance.hideTexts) {
 			if (hideText == text) {
-				//if (Settings::instance.logNotifications) {
-					//logger::info("Hiding notification \"{}\" because it matches pattern \"{}\"", text, hideText);
-				//}
+				if (Settings::instance.logNotifications) {
+					logger::info("Hiding notification \"{}\" because it matches pattern \"{}\"", text, hideText);
+				}
 				return true;
 			}
 		}
 
-		//if (Settings::instance.logNotifications) {
-			//logger::info("Showing notification \"{}\" because it doesn't match any known patterns", text);
-		//}
+		if (Settings::instance.logNotifications) {
+			logger::info("Showing notification \"{}\" because it doesn't match any known patterns", text);
+		}
 
 		return false;
 	}
@@ -93,12 +92,12 @@ namespace
 			push(r10);
 			push(r11);
 
-			sub(rsp, 40);
+			sub(rsp, 0x20); // 16 byte alignment! Needed for FPU operations.
 			mov(rax, (uintptr_t)std::addressof(ShouldSkipNotification));
 			call(rax);
-			add(rsp, 40);
+			add(rsp, 0x20);
 
-			// TODO: XMM?
+			// TODO: do I need to save XMM?
 			pop(r11);
 			pop(r10);
 			pop(r9);
