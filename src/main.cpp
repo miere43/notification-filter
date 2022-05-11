@@ -4,10 +4,29 @@
 
 namespace
 {
+	struct TextPattern
+	{
+		std::string text;
+	};
+
+	struct RegularExpressionPattern
+	{
+		std::string originalString;
+		std::regex regex;
+	};
+
+	using AnyPattern = std::variant<TextPattern, RegularExpressionPattern>;
+
+	struct PatternLoad
+	{
+		AnyPattern value;
+		int order;
+	};
+
 	struct Settings
 	{
-		bool logNotifications = false;
-		std::vector<std::string> hideTexts;
+		bool enableLog = false;
+		std::vector<AnyPattern> patterns;
 
 		static Settings instance;
 	};
@@ -25,13 +44,42 @@ namespace
 			return;
 		}
 
-		Settings::instance.logNotifications = ini.GetBoolValue("General", "LogNotifications", Settings::instance.logNotifications);
+		Settings::instance.enableLog = ini.GetBoolValue("General", "EnableLog", Settings::instance.enableLog);
+
+		std::vector<PatternLoad> entries;
 
 		std::list<CSimpleIniA::Entry> hideEntries;
 		ini.GetAllValues("Filters", "Hide", hideEntries);
 
 		for (const auto& entry : hideEntries) {
-			Settings::instance.hideTexts.push_back(std::string(entry.pItem));
+			const auto& textPattern = std::string(entry.pItem);
+			entries.push_back({ TextPattern{ textPattern }, entry.nOrder });
+		}
+
+		hideEntries.clear();
+		ini.GetAllValues("Filters", "HideRegex", hideEntries);
+
+		for (const auto& entry : hideEntries) {
+			std::string regexString(entry.pItem);
+			std::regex regexPattern;
+			try {
+				regexPattern = std::regex(regexString, std::regex_constants::ECMAScript);
+			}
+			catch (const std::regex_error& e) {
+				logger::error("- Error parsing regular expression \"{}\": \"{}\"", regexString, e.what());
+				continue;
+			}
+
+			entries.push_back({ RegularExpressionPattern{ regexString, regexPattern }, entry.nOrder });
+		}
+
+		std::sort(entries.begin(), entries.end(), [](const PatternLoad& a, const PatternLoad& b) {
+			return a.order > b.order;
+		});
+
+		Settings::instance.patterns.reserve(entries.size());
+		for (const auto& entry : entries) {
+			Settings::instance.patterns.push_back(entry.value);
 		}
 	}
 
@@ -58,16 +106,27 @@ namespace
 	static bool __fastcall ShouldSkipNotification(const char** textPtrRef)
 	{
 		const auto text = std::string_view(*textPtrRef);
-		for (const auto& hideText : Settings::instance.hideTexts) {
-			if (hideText == text) {
-				if (Settings::instance.logNotifications) {
-					logger::info("Hiding notification \"{}\" because it matches pattern \"{}\"", text, hideText);
+		for (const auto& pattern : Settings::instance.patterns) {
+			if (std::holds_alternative<TextPattern>(pattern)) {
+				const auto& textPattern = std::get<TextPattern>(pattern);
+				if (textPattern.text == text) {
+					if (Settings::instance.enableLog) {
+						logger::info("Hiding notification \"{}\" because it matches text pattern \"{}\"", text, textPattern.text);
+					}
+					return true;
 				}
-				return true;
+			} else {
+				const auto& regexPattern = std::get<RegularExpressionPattern>(pattern);
+				if (std::regex_match(text.data(), regexPattern.regex)) {
+					if (Settings::instance.enableLog) {
+						logger::info("Hiding notification \"{}\" because it matches regular expression pattern \"{}\"", text, regexPattern.originalString);
+					}
+					return true;
+				}
 			}
 		}
 
-		if (Settings::instance.logNotifications) {
+		if (Settings::instance.enableLog) {
 			logger::info("Showing notification \"{}\" because it doesn't match any known patterns", text);
 		}
 
@@ -154,12 +213,26 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
 	
 	LoadSettings();
-	logger::info("Using settings: LogNotifications = {}, removal entries count = {}", Settings::instance.logNotifications, Settings::instance.hideTexts.size());
+	logger::info("Using settings: EnableLog = {}, {} patterns loaded.", Settings::instance.enableLog, Settings::instance.patterns.size());
+	if (Settings::instance.enableLog && Settings::instance.patterns.size()) {
+		logger::info("Loaded patterns:");
+		int index = 0;
+		for (const auto& pattern : Settings::instance.patterns) {
+			++index;
+			if (std::holds_alternative<TextPattern>(pattern)) {
+				const auto& text = std::get<TextPattern>(pattern);
+				logger::info("{}. Text \"{}\"", index, text.text);
+			} else {
+				const auto& regex = std::get<RegularExpressionPattern>(pattern);
+				logger::info("{}. Regular Expression \"{}\"", index, regex.originalString);
+			}
+		}
+	}
 
 	SKSE::Init(a_skse);
 
-	if (Settings::instance.hideTexts.size() == 0) {
-		logger::error("No removal entries were registered, skipping patching.");
+	if (Settings::instance.patterns.size() == 0) {
+		logger::error("No patterns were registered, skipping patching.");
 	} else {
 		Install();
 		logger::info("Installed patch.");
