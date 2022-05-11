@@ -68,7 +68,7 @@ namespace
 				pattern = std::regex(originalString, std::regex_constants::ECMAScript);
 			}
 			catch (const std::regex_error& e) {
-				logger::error("- Error parsing regular expression \"{}\": \"{}\"", originalString, e.what());
+				logger::error("- Error parsing regular expression \"{}\": \"{}\""sv, originalString, e.what());
 				continue;
 			}
 
@@ -113,7 +113,7 @@ namespace
 				const auto& textPattern = std::get<TextPattern>(pattern);
 				if (textPattern.text == text) {
 					if (Settings::instance.enableLog) {
-						logger::info("Hiding notification \"{}\" because it matches text pattern \"{}\"", text, textPattern.text);
+						logger::info("Hiding notification \"{}\" because it matches text pattern \"{}\""sv, text, textPattern.text);
 					}
 					return true;
 				}
@@ -121,7 +121,7 @@ namespace
 				const auto& regexPattern = std::get<RegularExpressionPattern>(pattern);
 				if (std::regex_match(text.data(), regexPattern.regex)) {
 					if (Settings::instance.enableLog) {
-						logger::info("Hiding notification \"{}\" because it matches regular expression pattern \"{}\"", text, regexPattern.originalString);
+						logger::info("Hiding notification \"{}\" because it matches regular expression pattern \"{}\""sv, text, regexPattern.originalString);
 					}
 					return true;
 				}
@@ -129,7 +129,7 @@ namespace
 		}
 
 		if (Settings::instance.enableLog) {
-			logger::info("Showing notification \"{}\" because it doesn't match any known patterns", text);
+			logger::info("Showing notification \"{}\" because it doesn't match any known patterns"sv, text);
 		}
 
 		return false;
@@ -198,7 +198,7 @@ extern "C" DLLEXPORT auto constinit SKSEPlugin_Version = []() {
 
 	v.PluginVersion(Plugin::VERSION);
 	v.PluginName(Plugin::NAME);
-	v.AuthorName("miere");
+	v.AuthorName("miere"sv);
 	v.UsesAddressLibrary(true);
 	v.CompatibleVersions({ SKSE::RUNTIME_LATEST });
 
@@ -211,18 +211,18 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
 	
 	LoadSettings();
-	logger::info("Using settings: EnableLog = {}, {} patterns loaded.", Settings::instance.enableLog, Settings::instance.patterns.size());
+	logger::info("Using settings: EnableLog = {}, {} patterns loaded."sv, Settings::instance.enableLog, Settings::instance.patterns.size());
 	if (Settings::instance.enableLog && Settings::instance.patterns.size()) {
-		logger::info("Loaded patterns:");
+		logger::info("Loaded patterns:"sv);
 		int index = 0;
 		for (const auto& pattern : Settings::instance.patterns) {
 			++index;
 			if (std::holds_alternative<TextPattern>(pattern)) {
 				const auto& text = std::get<TextPattern>(pattern);
-				logger::info("{}. Text \"{}\"", index, text.text);
+				logger::info("{}. Text \"{}\""sv, index, text.text);
 			} else {
 				const auto& regex = std::get<RegularExpressionPattern>(pattern);
-				logger::info("{}. Regular Expression \"{}\"", index, regex.originalString);
+				logger::info("{}. Regular Expression \"{}\""sv, index, regex.originalString);
 			}
 		}
 	}
@@ -230,10 +230,10 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 	SKSE::Init(a_skse);
 
 	if (Settings::instance.patterns.size() == 0) {
-		logger::error("No patterns were registered, skipping patching.");
+		logger::error("No patterns were registered, skipping patching."sv);
 	} else {
 		Install();
-		logger::info("Installed patch.");
+		logger::info("Installed patch."sv);
 	}
 
 	return true;
