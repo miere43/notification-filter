@@ -1,8 +1,40 @@
 #include <xbyak/xbyak.h>
 #include <SKSE/Trampoline.h>
+#include "SimpleIni.h"
 
 namespace
 {
+	struct Settings
+	{
+		bool logNotifications = false;
+		std::vector<std::string> hideTexts;
+
+		static Settings instance;
+	};
+	Settings Settings::instance;
+
+	void LoadSettings()
+	{
+		CSimpleIniA ini;
+		ini.SetUnicode(true);
+		ini.SetMultiKey(true);
+
+		auto rc = ini.LoadFile(L"Data/SKSE/Plugins/NotificationFilter.ini");
+		if (rc < 0) {
+			logger::error("Failed to read INI settings from Data/SKSE/Plugins/NotificationFilter.ini, using default settings (error code was {})", rc);
+			return;
+		}
+
+		Settings::instance.logNotifications = ini.GetBoolValue("General", "LogNotifications", Settings::instance.logNotifications);
+
+		std::list<CSimpleIniA::Entry> hideEntries;
+		ini.GetAllValues("Filters", "Hide", hideEntries);
+
+		for (const auto& entry : hideEntries) {
+			Settings::instance.hideTexts.push_back(std::string(entry.pItem));
+		}
+	}
+
 	void InitializeLog()
 	{
 		auto path = logger::log_directory();
@@ -23,8 +55,23 @@ namespace
 		spdlog::set_pattern("%g(%#): [%^%l%$] %v"s);
 	}
 
-	extern "C" static bool ShouldSkipNotification(const char* text)
+	static bool __fastcall ShouldSkipNotification(const char** textPtrRef)
 	{
+		auto textPtr = *textPtrRef;
+		const auto text = std::string_view(textPtr);
+		for (const auto& hideText : Settings::instance.hideTexts) {
+			if (hideText == text) {
+				//if (Settings::instance.logNotifications) {
+					//logger::info("Hiding notification \"{}\" because it matches pattern \"{}\"", text, hideText);
+				//}
+				return true;
+			}
+		}
+
+		//if (Settings::instance.logNotifications) {
+			//logger::info("Showing notification \"{}\" because it doesn't match any known patterns", text);
+		//}
+
 		return false;
 	}
 
@@ -36,10 +83,28 @@ namespace
 			mov(rax, REL::Relocation<uintptr_t>(REL::Offset(0x1360EF0)).get());
 			call(rax);
 
-			// RAX = pointer to notification text (null-terminated).
-			mov(rcx, rax);
+			// Now RAX is pointer to notification text (null-terminated, char**).
+			mov(rcx, rax); // copy for func argument
+
+			push(rcx);
+			push(rdx);
+			push(r8);
+			push(r9);
+			push(r10);
+			push(r11);
+
+			sub(rsp, 40);
 			mov(rax, (uintptr_t)std::addressof(ShouldSkipNotification));
 			call(rax);
+			add(rsp, 40);
+
+			// TODO: XMM?
+			pop(r11);
+			pop(r10);
+			pop(r9);
+			pop(r8);
+			pop(rdx);
+			pop(rcx);
 
 			cmp(al, 0);
 			je("ok");
@@ -88,10 +153,18 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 {
 	InitializeLog();
 	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
+	
+	LoadSettings();
+	logger::info("Using settings: LogNotifications = {}, removal entries count = {}", Settings::instance.logNotifications, Settings::instance.hideTexts.size());
 
 	SKSE::Init(a_skse);
 
-	Install();
+	if (Settings::instance.hideTexts.size() == 0) {
+		logger::error("No removal entries were registered, skipping patching.");
+	} else {
+		Install();
+		logger::info("Installed patch.");
+	}
 
 	return true;
 }
