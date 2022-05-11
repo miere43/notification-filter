@@ -4,6 +4,9 @@
 
 namespace
 {
+	constexpr auto PapyrusDebugNotificationID = REL::ID(55269);
+	constexpr auto GetNotificationTextID = REL::ID(104285);
+
 	struct TextPattern
 	{
 		std::string text;
@@ -138,7 +141,7 @@ namespace
 		DebugNotificationCode()
 		{
 			// Restore call that was overwritten by trampoline.
-			mov(rax, REL::Relocation<uintptr_t>(REL::Offset(0x1360EF0)).get());
+			mov(rax, REL::Relocation<uintptr_t>(GetNotificationTextID).get());
 			call(rax);
 
 			// Now RAX is pointer to notification text (null-terminated, char**).
@@ -168,26 +171,26 @@ namespace
 			je("ok");
 
 			// If return value is 0, exit from function (don't show notification).
-			mov(rax, REL::Relocation<uintptr_t>(REL::Offset(0x9923F0)).get());
+			mov(rax, REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0xD0).get());
 			jmp(rax);
 
 			// Otherwise, jump back to normal control flow (show notification).
 			L("ok");
 			mov(rax, rcx);  // Return notification text.
-			mov(rcx, REL::Relocation<uintptr_t>(REL::Offset(0x992376)).get());
+			mov(rcx, REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0x56).get());
 			jmp(rcx);
 		}
 	};
 
 	static void Install()
 	{
-		REL::Relocation<uintptr_t> debugNotificationFuncContent(REL::Offset(0x992371));
+		REL::Relocation<uintptr_t> debugNotificationFuncContent(PapyrusDebugNotificationID, 0x51);
 		auto debugNotificationFuncStartPtr = debugNotificationFuncContent.get();
 
 		auto bruh = new DebugNotificationCode();
 		auto codePtr = bruh->getCode();
 
-		SKSE::AllocTrampoline(2048);
+		SKSE::AllocTrampoline(20);
 
 		// Replace 5 bytes of this instruction with trampoline.
 		// E8 7AEB9C00 | call <skyrimse.GetNotificationText>
