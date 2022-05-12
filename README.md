@@ -1,4 +1,4 @@
-This is a basic plugin template for use with CommonLibSSE
+SKSE plugin that allows hiding notifications based on customizable filters.
 
 ## Requirements
 * [CMake](https://cmake.org/)
@@ -23,3 +23,7 @@ cmake --build build --config Release
 ## Tips
 * Set `COPY_OUTPUT` to `ON` to automatically copy the built dll to the game directory, i.e. `cmake --preset vs2022-windows -DCOPY_OUTPUT=ON`
 * Build the `package` target to automatically build and zip up your dll in a ready-to-distribute format.
+
+## License
+
+MIT

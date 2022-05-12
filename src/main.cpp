@@ -7,6 +7,12 @@ namespace
 	constexpr auto PapyrusDebugNotificationID = REL::ID(55269);
 	constexpr auto GetNotificationTextID = REL::ID(104285);
 
+	enum class FilterType
+	{
+		All,
+		Papyrus,
+	};
+
 	struct TextPattern
 	{
 		std::string text;
@@ -14,8 +20,8 @@ namespace
 
 	struct RegularExpressionPattern
 	{
-		std::string originalString;
 		std::regex regex;
+		std::string originalString;
 	};
 
 	using AnyPattern = std::variant<TextPattern, RegularExpressionPattern>;
@@ -23,17 +29,16 @@ namespace
 	struct PatternLoad
 	{
 		AnyPattern value;
-		int order;
+		int order = 0;
 	};
 
 	struct Settings
 	{
 		bool enableLog = false;
 		std::vector<AnyPattern> patterns;
-
-		static Settings instance;
+		FilterType filterType = FilterType::All;
 	};
-	Settings Settings::instance;
+	static Settings settings;
 
 	void LoadSettings()
 	{
@@ -47,7 +52,18 @@ namespace
 			return;
 		}
 
-		Settings::instance.enableLog = ini.GetBoolValue("General", "EnableLog", Settings::instance.enableLog);
+		settings.enableLog = ini.GetBoolValue("General", "EnableLog", settings.enableLog);
+		const auto filterTypeString = ini.GetValue("General", "HookType", "All");
+		if (0 == _stricmp(filterTypeString, "Papyrus")) {
+			settings.filterType = FilterType::Papyrus;
+		} else if (0 == _stricmp(filterTypeString, "All")) {
+			settings.filterType = FilterType::All;
+		} else {
+			logger::error(
+				"Invalid value for \"FilterType\" option in section [General]. Expected string \"All\" or \"Papyrus\", got \"{}\". Using \"All\" instead"sv,
+				filterTypeString
+			);
+		}
 
 		std::vector<PatternLoad> patterns;
 
@@ -72,16 +88,16 @@ namespace
 				continue;
 			}
 
-			patterns.push_back({ RegularExpressionPattern{ originalString, pattern }, entry.nOrder });
+			patterns.push_back({ RegularExpressionPattern{ pattern, originalString }, entry.nOrder });
 		}
 
 		std::sort(patterns.begin(), patterns.end(), [](const PatternLoad& a, const PatternLoad& b) {
 			return a.order > b.order;
 		});
 
-		Settings::instance.patterns.reserve(patterns.size());
+		settings.patterns.reserve(patterns.size());
 		for (const auto& pattern : patterns) {
-			Settings::instance.patterns.push_back(pattern.value);
+			settings.patterns.push_back(pattern.value);
 		}
 	}
 
@@ -108,11 +124,11 @@ namespace
 	static bool ShouldSkipNotification(const char** textPtrRef)
 	{
 		const auto text = std::string_view(*textPtrRef);
-		for (const auto& pattern : Settings::instance.patterns) {
+		for (const auto& pattern : settings.patterns) {
 			if (std::holds_alternative<TextPattern>(pattern)) {
 				const auto& textPattern = std::get<TextPattern>(pattern);
 				if (textPattern.text == text) {
-					if (Settings::instance.enableLog) {
+					if (settings.enableLog) {
 						logger::info("Hiding notification \"{}\" because it matches text pattern \"{}\""sv, text, textPattern.text);
 					}
 					return true;
@@ -120,7 +136,7 @@ namespace
 			} else {
 				const auto& regexPattern = std::get<RegularExpressionPattern>(pattern);
 				if (std::regex_match(text.data(), regexPattern.regex)) {
-					if (Settings::instance.enableLog) {
+					if (settings.enableLog) {
 						logger::info("Hiding notification \"{}\" because it matches regular expression pattern \"{}\""sv, text, regexPattern.originalString);
 					}
 					return true;
@@ -128,16 +144,17 @@ namespace
 			}
 		}
 
-		if (Settings::instance.enableLog) {
+		if (settings.enableLog) {
 			logger::info("Showing notification \"{}\" because it doesn't match any known patterns"sv, text);
 		}
 
 		return false;
 	}
 
-	struct DebugNotificationCode : Xbyak::CodeGenerator
+	// Hooks Papyrus Debug.Notification function.
+	struct PapyrusDebugNotificationCode : Xbyak::CodeGenerator
 	{
-		DebugNotificationCode()
+		PapyrusDebugNotificationCode()
 		{
 			// Restore call that was overwritten by trampoline.
 			mov(rax, REL::Relocation<uintptr_t>(GetNotificationTextID).get());
@@ -179,18 +196,79 @@ namespace
 			mov(rcx, REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0x56).get());
 			jmp(rcx);
 		}
+
+		static void Install()
+		{
+			auto codeGen = new PapyrusDebugNotificationCode();
+			auto codePtr = codeGen->getCode();
+
+			SKSE::AllocTrampoline(20);
+
+			// Replace call to GetNotificationText with our code.
+			SKSE::GetTrampoline().write_branch<5>(REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0x51).get(), codePtr);
+		}
 	};
 
-	static void Install()
+	// Hooks native notification function (Papyrus calls it from Debug.Notification).
+	struct NotificationCode : Xbyak::CodeGenerator
 	{
-		auto codeGen = new DebugNotificationCode();
-		auto codePtr = codeGen->getCode();
+		static bool Thunk(const char* a_notification, const char* a_soundToPlay, bool a_cancelIfAlreadyQueued)
+		{
+			(void*)a_soundToPlay;
+			(void*)a_cancelIfAlreadyQueued;
+			return ShouldSkipNotification(&a_notification);
+		}
 
-		SKSE::AllocTrampoline(20);
+		NotificationCode()
+		{
+			push(rcx);
+			push(rdx);
+			push(r8);
+			push(r9);
+			push(r10);
+			push(r11);
 
-		// Replace call to GetNotificationText with our code.
-		SKSE::GetTrampoline().write_branch<5>(REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0x51).get(), codePtr);
-	}
+			sub(rsp, 0x20 + 0x08); // Add +0x08 to align to 16-byte boundary.
+			mov(rax, (uintptr_t)std::addressof(Thunk));
+			call(rax);
+			add(rsp, 0x20 + 0x08);
+
+			// TODO: do I need to save XMM?
+			pop(r11);
+			pop(r10);
+			pop(r9);
+			pop(r8);
+			pop(rdx);
+			pop(rcx);
+
+			cmp(al, 0);
+			je("ok");
+
+			// If return value is 1, exit from function (don't show notification).
+			mov(rax, REL::Relocation<uintptr_t>(RE::Offset::DebugNotification, 0x35F).get());
+			jmp(rax);
+
+			// Otherwise, jump back to normal control flow (show notification).
+			L("ok");
+			
+			// Restore instructions overwritten by trampoline.
+			push(rdi);
+			push(r12);
+			push(r13);
+
+			mov(rax, REL::Relocation<uintptr_t>(RE::Offset::DebugNotification, 0x06).get());
+			jmp(rax);
+		}
+
+		static void Install()
+		{
+			auto codeGen = new NotificationCode();
+			auto codePtr = codeGen->getCode();
+
+			SKSE::AllocTrampoline(20);
+			SKSE::GetTrampoline().write_branch<5>(REL::Relocation<uintptr_t>(RE::Offset::DebugNotification).get(), codePtr);
+		}
+	};
 }
 
 extern "C" DLLEXPORT auto constinit SKSEPlugin_Version = []() {
@@ -211,11 +289,16 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
 	
 	LoadSettings();
-	logger::info("Using settings: EnableLog = {}, {} patterns loaded."sv, Settings::instance.enableLog, Settings::instance.patterns.size());
-	if (Settings::instance.enableLog && Settings::instance.patterns.size()) {
+	logger::info(
+		"Using settings: FilterType = {}, EnableLog = {}, {} patterns loaded"sv,
+		settings.filterType == FilterType::All ? "All" : "Papyrus",
+		settings.enableLog,
+		settings.patterns.size()
+	);
+	if (settings.enableLog && settings.patterns.size()) {
 		logger::info("Loaded patterns:"sv);
 		int index = 0;
-		for (const auto& pattern : Settings::instance.patterns) {
+		for (const auto& pattern : settings.patterns) {
 			++index;
 			if (std::holds_alternative<TextPattern>(pattern)) {
 				const auto& text = std::get<TextPattern>(pattern);
@@ -229,11 +312,19 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 
 	SKSE::Init(a_skse);
 
-	if (Settings::instance.patterns.size() == 0) {
-		logger::error("No patterns were registered, skipping patching."sv);
+	if (settings.patterns.size() == 0) {
+		logger::error("- No patterns were registered"sv);
+	}
+	
+	if (settings.enableLog || settings.patterns.size()) {
+		if (settings.filterType == FilterType::All) {
+			NotificationCode::Install();
+		} else {
+			PapyrusDebugNotificationCode::Install();
+		}
+		logger::info("Patch was installed"sv);
 	} else {
-		Install();
-		logger::info("Installed patch."sv);
+		logger::info("Patch was NOT installed because all features were turned off");
 	}
 
 	return true;
