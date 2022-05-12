@@ -53,7 +53,7 @@ namespace
 		}
 
 		settings.enableLog = ini.GetBoolValue("General", "EnableLog", settings.enableLog);
-		const auto filterTypeString = ini.GetValue("General", "HookType", "All");
+		const auto filterTypeString = ini.GetValue("General", "FilterType", "All");
 		if (0 == _stricmp(filterTypeString, "Papyrus")) {
 			settings.filterType = FilterType::Papyrus;
 		} else if (0 == _stricmp(filterTypeString, "All")) {
