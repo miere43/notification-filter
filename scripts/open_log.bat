@@ -1,0 +1,1 @@
+notepad "C:\Users\unify\Documents\My Games\Skyrim Special Edition\SKSE\NotificationFilter.log"

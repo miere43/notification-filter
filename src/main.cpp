@@ -16,8 +16,8 @@ namespace util
 
 namespace
 {
-	constexpr auto PapyrusDebugNotificationID = REL::ID(55269);
-	constexpr auto GetNotificationTextID = REL::ID(104285);
+	constexpr auto PapyrusDebugNotificationID = REL::RelocationID(54612, 55269);
+	constexpr auto GetNotificationTextID = REL::RelocationID(97497, 104285);
 
 	enum class FilterType
 	{
@@ -199,12 +199,12 @@ namespace
 			je("ok");
 
 			// If return value is 1, exit from function (don't show notification).
-			mov(rax, REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0xD0).get());
+			mov(rax, REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, REL::VariantOffset(0x95, 0xD0, 0x95).offset()).get());
 			jmp(rax);
 
 			// Otherwise, jump back to normal control flow (show notification).
 			L("ok");
-			mov(rax, rcx);  // Return notification text.
+			mov(rax, rcx); // Return notification text.
 			mov(rcx, REL::Relocation<uintptr_t>(PapyrusDebugNotificationID, 0x56).get());
 			jmp(rcx);
 		}
@@ -257,7 +257,7 @@ namespace
 			je("ok");
 
 			// If return value is 1, exit from function (don't show notification).
-			mov(rax, REL::Relocation<uintptr_t>(RE::Offset::DebugNotification, 0x35F).get());
+			mov(rax, REL::Relocation<uintptr_t>(RE::Offset::DebugNotification, REL::VariantOffset(0x1DD, 0x35F, 0x1DD).offset()).get());
 			jmp(rax);
 
 			// Otherwise, jump back to normal control flow (show notification).
@@ -281,6 +281,19 @@ namespace
 			SKSE::GetTrampoline().write_branch<5>(REL::Relocation<uintptr_t>(RE::Offset::DebugNotification).get(), codePtr);
 		}
 	};
+
+	static std::string_view GetRuntimeString()
+	{
+		switch (REL::Module::GetRuntime()) {
+		case REL::Module::Runtime::AE:
+			return "Anniversary Edition"sv;
+		case REL::Module::Runtime::SE:
+			return "Special Edition"sv;
+		case REL::Module::Runtime::VR:
+			return "VR"sv;
+		}
+		return "Unknown"sv;
+	}
 }
 
 extern "C" [[maybe_unused]] __declspec(dllexport) constinit auto SKSEPlugin_Version = []() noexcept {
@@ -307,6 +320,7 @@ extern "C" [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Load(c
 {
 	InitializeLog();
 	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
+	logger::info("Runtime: {}"sv, GetRuntimeString());
 
 	LoadSettings();
 	logger::info(
