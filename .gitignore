@@ -1,3 +1,4 @@
-build/
 vcpkg_installed/
-external/
+out/
+.vs/
+src/Plugin.h

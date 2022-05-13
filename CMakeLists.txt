@@ -2,29 +2,39 @@ cmake_minimum_required(VERSION 3.22)
 
 project(
 	NotificationFilter
-	VERSION 1.0.1
+	VERSION 1.1.0
 	LANGUAGES CXX
+	DESCRIPTION "SKSE plugin that allows hiding notifications based on customizable rules."
 )
+set(PROJECT_FRIENDLY_NAME "Notification Filter")
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
-	message(FATAL_ERROR "in-source builds are not allowed")
-endif()
+configure_file(
+	${CMAKE_CURRENT_SOURCE_DIR}/cmake/Plugin.h.in
+	${CMAKE_CURRENT_SOURCE_DIR}/src/Plugin.h
+	@ONLY
+)
 
-macro(set_from_environment VARIABLE)
-	if(NOT DEFINED ${VARIABLE} AND DEFINED ENV{${VARIABLE}})
-		set(${VARIABLE} $ENV{${VARIABLE}})
-	endif()
-endmacro()
+configure_file(
+	${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.rc.in
+	${CMAKE_CURRENT_BINARY_DIR}/version.rc
+	@ONLY
+)
 
-set_from_environment(Skyrim64Path)
-if(NOT DEFINED Skyrim64Path)
-	message(FATAL_ERROR "Skyrim64Path is not set")
-endif()
+add_library(
+	${PROJECT_NAME}
+	SHARED
+	src/main.cpp
+	src/Plugin.h
+	${CMAKE_CURRENT_BINARY_DIR}/version.rc
+)
 
-option(COPY_OUTPUT "copy the output of build operations to the game directory" OFF)
+find_package(binary_io CONFIG REQUIRED)
+find_package(CommonLibSSE CONFIG REQUIRED)
+find_package(xbyak CONFIG REQUIRED)
+find_path(SIMPLEINI_INCLUDE_DIRS "ConvertUTF.c")
 
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-
-add_subdirectory(src)
-include(cmake/packaging.cmake)
+target_link_libraries(${PROJECT_NAME} PRIVATE CommonLibSSE::CommonLibSSE)
+target_link_libraries(${PROJECT_NAME} PRIVATE xbyak::xbyak)
+target_include_directories(${PROJECT_NAME} PRIVATE ${SIMPLEINI_INCLUDE_DIRS})

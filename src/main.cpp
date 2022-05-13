@@ -1,6 +1,18 @@
+#include <string_view>
+#include <SKSE/SKSE.h>
+#include <spdlog/sinks/basic_file_sink.h>
+#include <SimpleIni.h>
 #include <xbyak/xbyak.h>
-#include <SKSE/Trampoline.h>
-#include "SimpleIni.h"
+#include "Plugin.h"
+
+using namespace std::literals;
+
+namespace logger = SKSE::log;
+
+namespace util
+{
+	using SKSE::stl::report_and_fail;
+}
 
 namespace
 {
@@ -250,7 +262,7 @@ namespace
 
 			// Otherwise, jump back to normal control flow (show notification).
 			L("ok");
-			
+
 			// Restore instructions overwritten by trampoline.
 			push(rdi);
 			push(r12);
@@ -271,7 +283,7 @@ namespace
 	};
 }
 
-extern "C" DLLEXPORT auto constinit SKSEPlugin_Version = []() {
+extern "C" [[maybe_unused]] __declspec(dllexport) constinit auto SKSEPlugin_Version = []() noexcept {
 	SKSE::PluginVersionData v;
 
 	v.PluginVersion(Plugin::VERSION);
@@ -283,11 +295,19 @@ extern "C" DLLEXPORT auto constinit SKSEPlugin_Version = []() {
 	return v;
 }();
 
-extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
+extern "C" [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface*, SKSE::PluginInfo* pluginInfo)
+{
+	pluginInfo->name = Plugin::NAME.data();
+	pluginInfo->infoVersion = SKSE::PluginInfo::kVersion;
+	pluginInfo->version = Plugin::VERSION.pack();
+	return true;
+}
+
+extern "C" [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* skse)
 {
 	InitializeLog();
 	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
-	
+
 	LoadSettings();
 	logger::info(
 		"Using settings: FilterType = {}, EnableLog = {}, {} patterns loaded"sv,
@@ -310,12 +330,12 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 		}
 	}
 
-	SKSE::Init(a_skse);
+	SKSE::Init(skse);
 
 	if (settings.patterns.size() == 0) {
 		logger::error("- No patterns were registered"sv);
 	}
-	
+
 	if (settings.enableLog || settings.patterns.size()) {
 		if (settings.filterType == FilterType::All) {
 			NotificationCode::Install();

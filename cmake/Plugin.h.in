@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string_view>
+#include <REL/Relocation.h>
 
 namespace Plugin
 {
