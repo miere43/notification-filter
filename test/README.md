@@ -1,0 +1,1 @@
+Adds activator to MolagBallVoiceCell. On activation calls Debug.Notification with string "PapyrusTestString".
