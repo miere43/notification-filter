@@ -47,12 +47,74 @@ namespace
 	struct Settings
 	{
 		bool enableLog = false;
-		std::vector<AnyPattern> patterns;
+		std::vector<AnyPattern> hidePatterns;
+		std::vector<AnyPattern> showPatterns;
 		FilterType filterType = FilterType::All;
 	};
 	static Settings settings;
 
-	void LoadSettings()
+	static void LogPatterns(const std::vector<AnyPattern>& patterns, const std::string_view& title)
+	{
+		if (patterns.size() == 0 || !settings.enableLog) {
+			return;
+		}
+	
+		logger::debug("{}"sv, title);
+		int index = 0;
+		for (const auto& pattern : patterns) {
+			++index;
+			if (std::holds_alternative<TextPattern>(pattern)) {
+				const auto& text = std::get<TextPattern>(pattern);
+				logger::debug("{}. Text \"{}\""sv, index, text.text);
+			} else {
+				const auto& regex = std::get<RegularExpressionPattern>(pattern);
+				logger::debug("{}. Regular Expression \"{}\""sv, index, regex.originalString);
+			}
+		}
+	}
+
+	static std::vector<AnyPattern> LoadPatterns(const CSimpleIniA& ini, const char* plainKey, const char* regexKey)
+	{
+		std::vector<PatternLoad> patternLoads;
+
+		std::list<CSimpleIniA::Entry> entries;
+		ini.GetAllValues("Filters", plainKey, entries);
+
+		for (const auto& entry : entries) {
+			patternLoads.push_back({ TextPattern{ std::string(entry.pItem) }, entry.nOrder });
+		}
+
+		entries.clear();
+		ini.GetAllValues("Filters", regexKey, entries);
+
+		for (const auto& entry : entries) {
+			std::string originalString(entry.pItem);
+			std::regex pattern;
+			try {
+				pattern = std::regex(originalString, std::regex_constants::ECMAScript);
+			}
+			catch (const std::regex_error& e) {
+				logger::error("Error parsing regular expression \"{}\": \"{}\""sv, originalString, e.what());
+				continue;
+			}
+
+			patternLoads.push_back({ RegularExpressionPattern{ pattern, originalString }, entry.nOrder });
+		}
+
+		std::sort(patternLoads.begin(), patternLoads.end(), [](const PatternLoad& a, const PatternLoad& b) {
+			return a.order > b.order;
+		});
+
+		std::vector<AnyPattern> patterns;
+		patterns.reserve(patternLoads.size());
+		for (const auto& pattern : patternLoads) {
+			patterns.push_back(pattern.value);
+		}
+		
+		return patterns;
+	}
+
+	static void LoadSettings(spdlog::logger& log)
 	{
 		CSimpleIniA ini;
 		ini.SetUnicode(true);
@@ -65,6 +127,11 @@ namespace
 		}
 
 		settings.enableLog = ini.GetBoolValue("General", "EnableLog", settings.enableLog);
+		if (settings.enableLog) {
+			log.set_level(spdlog::level::debug);
+			log.flush_on(spdlog::level::debug);
+		}
+
 		const auto filterTypeString = ini.GetValue("General", "FilterType", "All");
 		if (0 == _stricmp(filterTypeString, "Papyrus")) {
 			settings.filterType = FilterType::Papyrus;
@@ -77,43 +144,11 @@ namespace
 			);
 		}
 
-		std::vector<PatternLoad> patterns;
-
-		std::list<CSimpleIniA::Entry> entries;
-		ini.GetAllValues("Filters", "Hide", entries);
-
-		for (const auto& entry : entries) {
-			patterns.push_back({ TextPattern{ std::string(entry.pItem) }, entry.nOrder });
-		}
-
-		entries.clear();
-		ini.GetAllValues("Filters", "HideRegex", entries);
-
-		for (const auto& entry : entries) {
-			std::string originalString(entry.pItem);
-			std::regex pattern;
-			try {
-				pattern = std::regex(originalString, std::regex_constants::ECMAScript);
-			}
-			catch (const std::regex_error& e) {
-				logger::error("- Error parsing regular expression \"{}\": \"{}\""sv, originalString, e.what());
-				continue;
-			}
-
-			patterns.push_back({ RegularExpressionPattern{ pattern, originalString }, entry.nOrder });
-		}
-
-		std::sort(patterns.begin(), patterns.end(), [](const PatternLoad& a, const PatternLoad& b) {
-			return a.order > b.order;
-		});
-
-		settings.patterns.reserve(patterns.size());
-		for (const auto& pattern : patterns) {
-			settings.patterns.push_back(pattern.value);
-		}
+		settings.hidePatterns = LoadPatterns(ini, "Hide", "HideRegex");
+		settings.showPatterns = LoadPatterns(ini, "Show", "ShowRegex");
 	}
 
-	void InitializeLog()
+	static std::shared_ptr<spdlog::logger> InitializeLog()
 	{
 		auto path = logger::log_directory();
 		if (!path) {
@@ -129,38 +164,63 @@ namespace
 		log->set_level(level);
 		log->flush_on(level);
 
-		spdlog::set_default_logger(std::move(log));
+		spdlog::set_default_logger(log);
 		spdlog::set_pattern("%g(%#): [%^%l%$] %v"s);
+		return log;
+	}
+
+	[[nodiscard]] static bool MatchPattern(const AnyPattern& pattern, const std::string_view& text)
+	{
+		if (std::holds_alternative<TextPattern>(pattern)) {
+			const auto& textPattern = std::get<TextPattern>(pattern);
+			return textPattern.text == text;
+		}
+
+		const auto& regexPattern = std::get<RegularExpressionPattern>(pattern);
+		return std::regex_match(text.data(), regexPattern.regex);
+	}
+
+	[[nodiscard]] static const AnyPattern* MatchPatterns(const std::vector<AnyPattern>& patterns, const std::string_view& text)
+	{
+		for (const auto& pattern : patterns) {
+			if (MatchPattern(pattern, text)) {
+				return &pattern;
+			}
+		}
+		return nullptr;
+	}
+
+	static void LogPatternMatch(const AnyPattern& pattern, const std::string_view& text, const std::string_view& showingOrHiding)
+	{
+		if (!settings.enableLog) {
+			return;
+		}
+
+		if (std::holds_alternative<TextPattern>(pattern)) {
+			const auto& textPattern = std::get<TextPattern>(pattern);
+			logger::debug("{} notification \"{}\" because it matches text pattern \"{}\""sv, showingOrHiding, text, textPattern.text);
+		} else {
+			const auto& regexPattern = std::get<RegularExpressionPattern>(pattern);
+			logger::debug("{} notification \"{}\" because it matches regular expression pattern \"{}\""sv, showingOrHiding, text, regexPattern.originalString);
+		}
 	}
 
 	static bool ShouldSkipNotification(const char** textPtrRef)
 	{
 		const auto text = std::string_view(*textPtrRef);
-		for (const auto& pattern : settings.patterns) {
-			if (std::holds_alternative<TextPattern>(pattern)) {
-				const auto& textPattern = std::get<TextPattern>(pattern);
-				if (textPattern.text == text) {
-					if (settings.enableLog) {
-						logger::info("Hiding notification \"{}\" because it matches text pattern \"{}\""sv, text, textPattern.text);
-					}
-					return true;
-				}
-			} else {
-				const auto& regexPattern = std::get<RegularExpressionPattern>(pattern);
-				if (std::regex_match(text.data(), regexPattern.regex)) {
-					if (settings.enableLog) {
-						logger::info("Hiding notification \"{}\" because it matches regular expression pattern \"{}\""sv, text, regexPattern.originalString);
-					}
-					return true;
-				}
-			}
+		const auto hidePattern = MatchPatterns(settings.hidePatterns, text);
+		if (hidePattern == nullptr) {
+			logger::debug("Showing notification \"{}\" because it doesn't match any known hide patterns"sv, text);
+			return false;
 		}
 
-		if (settings.enableLog) {
-			logger::info("Showing notification \"{}\" because it doesn't match any known patterns"sv, text);
+		if (const auto showPattern = MatchPatterns(settings.showPatterns, text)) {
+			LogPatternMatch(*showPattern, text, "Showing"sv);
+			return false;
 		}
-
-		return false;
+		
+		LogPatternMatch(*hidePattern, text, "Hiding"sv);
+		return true;
 	}
 
 	// Hooks Papyrus Debug.Notification function.
@@ -318,39 +378,30 @@ extern "C" [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Query(
 
 extern "C" [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* skse)
 {
-	InitializeLog();
+	auto log = InitializeLog();
 	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
 	logger::info("Runtime: {}"sv, GetRuntimeString());
 
-	LoadSettings();
+	LoadSettings(*log.get());
 	logger::info(
-		"Using settings: FilterType = {}, EnableLog = {}, {} patterns loaded"sv,
-		settings.filterType == FilterType::All ? "All" : "Papyrus",
+		"Using settings: FilterType = {}, EnableLog = {}, {} hide patterns loaded, {} show patterns loaded"sv,
+		settings.filterType == FilterType::All ? "All"sv : "Papyrus"sv,
 		settings.enableLog,
-		settings.patterns.size()
+		settings.hidePatterns.size(),
+		settings.showPatterns.size()
 	);
-	if (settings.enableLog && settings.patterns.size()) {
-		logger::info("Loaded patterns:"sv);
-		int index = 0;
-		for (const auto& pattern : settings.patterns) {
-			++index;
-			if (std::holds_alternative<TextPattern>(pattern)) {
-				const auto& text = std::get<TextPattern>(pattern);
-				logger::info("{}. Text \"{}\""sv, index, text.text);
-			} else {
-				const auto& regex = std::get<RegularExpressionPattern>(pattern);
-				logger::info("{}. Regular Expression \"{}\""sv, index, regex.originalString);
-			}
-		}
+	if (log->level() >= spdlog::level::debug) {
+		LogPatterns(settings.hidePatterns, "Loaded hide patterns:"sv);
+		LogPatterns(settings.showPatterns, "Loaded show patterns:"sv);
 	}
 
 	SKSE::Init(skse);
 
-	if (settings.patterns.size() == 0) {
-		logger::error("- No patterns were registered"sv);
+	if (settings.hidePatterns.size() == 0) {
+		logger::error("No hide patterns were registered"sv);
 	}
 
-	if (settings.enableLog || settings.patterns.size()) {
+	if (settings.hidePatterns.size()) {
 		if (settings.filterType == FilterType::All) {
 			NotificationCode::Install();
 		} else {
@@ -358,7 +409,7 @@ extern "C" [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Load(c
 		}
 		logger::info("Patch was installed"sv);
 	} else {
-		logger::info("Patch was NOT installed because all features were turned off");
+		logger::info("Patch was NOT installed because there are no hide patterns"sv);
 	}
 
 	return true;

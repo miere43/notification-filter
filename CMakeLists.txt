@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 project(
 	NotificationFilter
-	VERSION 1.1.0
+	VERSION 1.2.0
 	LANGUAGES CXX
 	DESCRIPTION "SKSE plugin that allows hiding notifications based on customizable rules."
 )
