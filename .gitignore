@@ -2,3 +2,4 @@ vcpkg_installed/
 out/
 .vs/
 src/Plugin.h
+test/test.zip

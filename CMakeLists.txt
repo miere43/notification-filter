@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 project(
 	NotificationFilter
-	VERSION 1.2.0
+	VERSION 1.2.1
 	LANGUAGES CXX
 	DESCRIPTION "SKSE plugin that allows hiding notifications based on customizable rules."
 )
@@ -30,7 +30,6 @@ add_library(
 	${CMAKE_CURRENT_BINARY_DIR}/version.rc
 )
 
-find_package(binary_io CONFIG REQUIRED)
 find_package(CommonLibSSE CONFIG REQUIRED)
 find_package(xbyak CONFIG REQUIRED)
 find_path(SIMPLEINI_INCLUDE_DIRS "ConvertUTF.c")

@@ -357,14 +357,24 @@ namespace
 }
 
 extern "C" [[maybe_unused]] __declspec(dllexport) constinit auto SKSEPlugin_Version = []() noexcept {
+	// @TODO: update CommonLibSSE and use constant from there.
+	constexpr REL::Version RUNTIME_SSE_1_6_640(1, 6, 640, 0);
+	constexpr REL::Version RUNTIME_SSE_1_6_659(1, 6, 659, 0); // GOG version, not tested
+	
 	SKSE::PluginVersionData v;
 
 	v.PluginVersion(Plugin::VERSION);
 	v.PluginName(Plugin::NAME);
 	v.AuthorName("miere"sv);
 	v.UsesAddressLibrary(true);
-	v.CompatibleVersions({ SKSE::RUNTIME_LATEST });
+	v.UsesStructsPost629(true);
+	v.HasNoStructUse(true);
 
+	v.CompatibleVersions({
+		SKSE::RUNTIME_SSE_1_6_629,
+		RUNTIME_SSE_1_6_640,
+		RUNTIME_SSE_1_6_659,
+	});
 	return v;
 }();
 
